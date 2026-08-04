@@ -72,6 +72,26 @@ function geckoLogout()
     session_destroy();
 }
 
+function setFileTimestamp($baseDir, $path, $value)
+{
+    $resolved = resolvePath($baseDir, $path);
+    if (!$resolved || !is_file($resolved)) {
+        return array('ok' => false, 'error' => 'File not found');
+    }
+
+    $timestamp = strtotime((string)$value);
+    if ($timestamp === false || $timestamp < 0) {
+        return array('ok' => false, 'error' => 'Invalid timestamp');
+    }
+
+    if (!@touch($resolved, $timestamp)) {
+        return array('ok' => false, 'error' => 'Failed to update timestamp');
+    }
+
+    clearstatcache(true, $resolved);
+    return array('ok' => true, 'timestamp' => date('Y-m-d H:i:s', $timestamp), 'modified' => (int)$timestamp);
+}
+
 function sanitizeRelPath($path)
 {
     $path = (string)$path;
@@ -237,11 +257,13 @@ function listEntries($dir)
         $perm = substr(sprintf('%o', fileperms($full)), -4);
         $sz = @filesize($full);
         $mt = @filemtime($full);
+        $modified = (int)($mt ? $mt : time());
         $items[] = array(
             'name' => $name,
             'is_dir' => $isDir,
             'size' => $isDir ? null : (int)($sz ? $sz : 0),
-            'modified' => (int)($mt ? $mt : time()),
+            'modified' => $modified,
+            'timestamp' => date('Y-m-d H:i:s', $modified),
             'icon' => fileIcon($name, $isDir),
             'perm' => $perm,
             'editable' => !$isDir && isTextFile($full),
@@ -2037,6 +2059,15 @@ if (isset($_GET['api'])) {
             jsonOut(array('ok' => true, 'perm' => $newPerm));
             break;
 
+        case 'touch':
+            $path = resolvePath($baseDir, (string)_v($input, 'path', ''));
+            $value = (string)_v($input, 'timestamp', '');
+            if (!$path) jsonOut(array('ok' => false, 'error' => 'File not found'), 404);
+            $result = setFileTimestamp($baseDir, (string)_v($input, 'path', ''), $value);
+            if (!$result['ok']) jsonOut($result, 400);
+            jsonOut($result);
+            break;
+
         case 'upload':
             $rel = sanitizeRelPath((string)_v($_POST, 'path', ''));
             $parent = resolvePath($baseDir, $rel);
@@ -3123,6 +3154,11 @@ button:focus-visible, .bc-btn:focus-visible, .ico-btn:focus-visible { outline-of
   color: var(--tx3);
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
+}
+.timestamp-cell {
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
 }
 .perm {
   display: inline-block;
@@ -4515,6 +4551,19 @@ button:focus-visible, .bc-btn:focus-visible, .ico-btn:focus-visible { outline-of
   </div>
 </div>
 
+<div class="overlay" id="mTimestamp">
+  <div class="modal m-sm">
+    <div class="modal-head"><h2>Modify Timestamp</h2><button class="btn btn-ghost btn-icon mc">✕</button></div>
+    <div class="modal-body">
+      <div class="fg">
+        <label>New timestamp</label>
+        <input type="datetime-local" id="timestampInput">
+      </div>
+    </div>
+    <div class="modal-foot"><button class="btn mc">Cancel</button><button class="btn btn-primary" id="timestampOk">Apply</button></div>
+  </div>
+</div>
+
 <div class="overlay" id="mUpload">
   <div class="modal m-md">
     <div class="modal-head"><h2>Upload Files</h2><button class="btn btn-ghost btn-icon mc">✕</button></div>
@@ -5166,6 +5215,18 @@ const fmtBytes = b => {
   return v.toFixed(1)+' TB';
 };
 const fmtDate = ts => new Date(ts*1000).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'});
+const fmtTimestamp = ts => {
+  if(!ts) return '—';
+  const d = new Date(ts * 1000);
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+};
+const fmtTimestampInput = ts => {
+  if(!ts) return '';
+  const d = new Date(ts * 1000);
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
 const fmtRelTime = ts => {
   if(!ts) return '—';
   const now = Date.now()/1000;
@@ -5428,7 +5489,7 @@ ${headChk}
 ${thSort('name','Name')}
 ${thSort('size','Size')}
 ${thSort('perm','Perm')}
-${thSort('modified','Modified')}
+${thSort('modified','Timestamp')}
 <span style="text-align:right;padding-right:4px">Actions</span>
 </div>`;
 
@@ -5438,6 +5499,7 @@ ${thSort('modified','Modified')}
     const chip = ext ? `<span class="fname-chip">${ext}</span>` : '';
     const selCls = S.selected.has(p) ? ' sel' : '';
     const chkCls = S.selected.has(p) ? ' on' : '';
+    const dateText = e.timestamp || fmtTimestamp(e.modified);
     const dateAbs = fmtDate(e.modified);
     const dateRel = fmtRelTime(e.modified);
     return `<li class="frow${selCls}" style="--i:${i}" data-icon="${e.icon}" data-path="${esc(p)}" data-dir="${e.is_dir}" data-name="${esc(e.name)}" data-ed="${e.editable}" data-perm="${e.perm||''}" data-idx="${i}">
@@ -5445,10 +5507,11 @@ ${thSort('modified','Modified')}
 <div class="fname-cell"><div class="ico-wrap">${IC[e.icon]||IC.file}</div><div class="fname-text"><span class="fname">${esc(e.name)}</span>${chip}</div></div>
 <span class="fmeta">${e.is_dir?'—':fmtBytes(e.size)}</span>
 <span class="fmeta"><span class="perm ${permClass(e.perm)}" data-a="chmod" title="${e.perm||'—'}${permSymbolic(e.perm)?' · '+permSymbolic(e.perm):''}${permLabel(e.perm)?' · '+permLabel(e.perm):''}">${e.perm||'—'}</span></span>
-<span class="fmeta" title="${dateAbs}">${dateRel}</span>
+<span class="fmeta timestamp-cell" title="${dateAbs} · ${esc(dateText)}">${esc(dateText)}</span>
 <div class="row-acts">
   <button class="ico-btn" data-a="open" title="Open"><svg viewBox="0 0 16 16"><path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm9-1a1 1 0 1 1-2 0 1 1 0 0 1 2 0ZM6.5 12a1.5 1.5 0 1 1 3 0 1.5 1.5 0 0 1-3 0Z" fill="currentColor"/></svg></button>
   <button class="ico-btn" data-a="rename" title="Rename"><svg viewBox="0 0 16 16"><path d="M11.013 1.427a1.75 1.75 0 0 1 2.474 0l1.086 1.086a1.75 1.75 0 0 1 0 2.474l-8.61 8.61c-.2.201-.44.354-.706.454L3.3 14.814a.75.75 0 0 1-.963-.927l.772-2.521a1.75 1.75 0 0 1 .413-.664l8.61-8.61Z" fill="currentColor"/></svg></button>
+  <button class="ico-btn" data-a="timestamp" title="Modify timestamp"><svg viewBox="0 0 16 16"><path d="M8 1.5A6.5 6.5 0 1 0 8 14.5 6.5 6.5 0 0 0 8 1.5Zm0 1.5A5 5 0 1 1 8 13 5 5 0 0 1 8 3Zm.75 2.25h-1.5v3.75l3.25 1.75.75-1.25-2.5-1.25Z" fill="currentColor"/></svg></button>
   <button class="ico-btn" data-a="dl" title="Download"><svg viewBox="0 0 16 16"><path d="M2.75 14A1.75 1.75 0 0 1 1 12.25v-2.5a.75.75 0 0 1 1.5 0v2.5c0 .138.112.25.25.25h10.5a.25.25 0 0 0 .25-.25v-2.5a.75.75 0 0 1 1.5 0v2.5A1.75 1.75 0 0 1 14.25 14H2.75Z" fill="currentColor"/><path d="M7.25 7.567V1.75a.75.75 0 0 1 1.5 0v5.817l1.78-1.347a.75.75 0 1 1 1.042 1.078l-3.5 3.5a.75.75 0 0 1-1.06 0l-3.5-3.5a.75.75 0 0 1 1.06-1.06l2.678 2.33Z" fill="currentColor"/></svg></button>
   <button class="ico-btn del" data-a="delete" title="Delete"><svg viewBox="0 0 16 16"><path d="M6.5 1.75a.25.25 0 0 1 .25-.25h2.5a.25.25 0 0 1 .25.25V3h-3V1.75Zm4.5 0V3h2.25a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1 0-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75ZM4.496 6.675l.66 6.6a.25.25 0 0 0 .249.225h5.19a.25.25 0 0 0 .249-.225l.66-6.6a.75.75 0 0 1 1.492.149l-.66 6.6A1.748 1.748 0 0 1 10.595 15h-5.19a1.75 1.75 0 0 1-1.741-1.575l-.66-6.6a.75.75 0 1 1 1.492-.15Z" fill="currentColor"/></svg></button>
 </div></li>`;
@@ -5591,6 +5654,7 @@ function openItem(path,isDir,editable){
 function rowAct(act,path,isDir,name,editable,perm){
   if(act==='open')return openItem(path,isDir,editable);
   if(act==='rename')return showRename(path,name);
+  if(act==='timestamp')return showTimestamp(path);
   if(act==='dl'&&!isDir)return window.location='?download='+encodeURIComponent(path);
   if(act==='delete')return showDelete(path,name,isDir);
   if(act==='chmod')return showChmod(path,perm);
@@ -5817,6 +5881,29 @@ $('#chmodOk').onclick = async () => {
   const d = await api('chmod', { path: S.chmodTarget, perm: perm });
   if (!d.ok) return toast(d.error, 'error');
   closeAll(); toast('Permissions updated', 'ok');
+  navigate(S.path);
+};
+
+// ─── Timestamp ──────────────────────────────────────────────────
+function showTimestamp(path){
+  S.timestampTarget = path;
+  const ts = S.entries.find(e => e.name === path.split(/[\\/]/).pop() && itemPath(e.name) === path) || null;
+  const value = ts && ts.timestamp ? ts.timestamp : '';
+  const input = $('#timestampInput');
+  if (input) {
+    input.value = value ? value.replace(' ', 'T').slice(0, 16) : '';
+    openM('#mTimestamp');
+    setTimeout(() => input.focus(), 120);
+  }
+}
+$('#timestampOk').onclick = async () => {
+  if (!S.timestampTarget) return;
+  const raw = $('#timestampInput').value.trim();
+  if (!raw) return toast('Choose a timestamp', 'error');
+  const value = raw.replace('T', ' ') + ':00';
+  const d = await api('touch', { path: S.timestampTarget, timestamp: value });
+  if (!d.ok) return toast(d.error, 'error');
+  closeAll(); toast('Timestamp updated', 'ok');
   navigate(S.path);
 };
 
