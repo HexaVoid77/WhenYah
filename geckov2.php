@@ -38,6 +38,7 @@ $baseDir  = $realBase ? $realBase : __DIR__;
 @ini_set('memory_limit', '256M');
 @ini_set('display_errors', 0); // Matikan display errors agar tidak merusak JSON
 error_reporting(E_ALL);
+session_start();
 
 function jsonOut($data, $code = 200)
 {
@@ -47,6 +48,29 @@ function jsonOut($data, $code = 200)
     exit;
 }
 
+function geckoAuthCredentials()
+{
+    $user = getenv('GECKO_AUTH_USER');
+    $pass = getenv('GECKO_AUTH_PASS');
+    if ($user === false || $user === '') $user = 'admin';
+    if ($pass === false || $pass === '') $pass = 'hexa77';
+    return array('user' => (string)$user, 'pass' => (string)$pass);
+}
+
+function geckoIsAuthenticated()
+{
+    return isset($_SESSION['gecko_fm_auth']) && $_SESSION['gecko_fm_auth'] === true;
+}
+
+function geckoLogout()
+{
+    $_SESSION = array();
+    if (ini_get('session.use_cookies')) {
+        $params = session_get_cookie_params();
+        setcookie(session_name(), '', time() - 42000, $params['path'], $params['domain'], $params['secure'], $params['httponly']);
+    }
+    session_destroy();
+}
 
 function sanitizeRelPath($path)
 {
@@ -1780,6 +1804,45 @@ function dbListTables($type, $host, $port, $user, $pass, $db)
 // Helper untuk akses array yang aman (pengganti operator ??)
 function _v($arr, $key, $default = '') {
     return (isset($arr[$key]) && $arr[$key] !== null) ? $arr[$key] : $default;
+}
+
+$authError = '';
+$auth = geckoAuthCredentials();
+
+if (isset($_GET['logout'])) {
+    geckoLogout();
+    $redirectTarget = strtok((string)($_SERVER['REQUEST_URI'] ?? ''), '?');
+    header('Location: ' . ($redirectTarget !== '' ? $redirectTarget : './'));
+    exit;
+}
+
+if (isset($_GET['api']) && !geckoIsAuthenticated()) {
+    jsonOut(array('ok' => false, 'error' => 'Unauthorized', 'login_required' => true), 401);
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['login'])) {
+    $submittedUser = trim((string)$_POST['username']);
+    $submittedPass = (string)$_POST['password'];
+    if ($submittedUser === $auth['user'] && $submittedPass === $auth['pass']) {
+        session_regenerate_id(true);
+        $_SESSION['gecko_fm_auth'] = true;
+        $_SESSION['gecko_fm_user'] = $submittedUser;
+        $redirectTarget = isset($_POST['redirect']) && $_POST['redirect'] !== '' ? (string)$_POST['redirect'] : (isset($_SERVER['REQUEST_URI']) ? strtok((string)$_SERVER['REQUEST_URI'], '?') : './');
+        header('Location: ' . $redirectTarget);
+        exit;
+    }
+    $authError = 'Username or password is invalid.';
+}
+
+if (!geckoIsAuthenticated()) {
+    $loginRedirect = isset($_SERVER['REQUEST_URI']) ? htmlspecialchars((string)$_SERVER['REQUEST_URI'], ENT_QUOTES, 'UTF-8') : '';
+    echo '<!DOCTYPE html>';
+    echo '<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>GECKO FM · Login</title><style>body{margin:0;font-family:Inter,system-ui,sans-serif;background:#050608;color:#f5f1e8;display:grid;place-items:center;min-height:100vh}.card{width:min(92vw,420px);background:linear-gradient(180deg,#101216,#0a0b0e);border:1px solid rgba(245,185,66,.24);border-radius:16px;padding:28px;box-shadow:0 20px 50px rgba(0,0,0,.45)}h1{margin:0 0 8px;font-size:28px}p{margin:0 0 18px;color:#d8d3c4}label{display:block;font-size:12px;color:#8a8578;margin-bottom:6px;text-transform:uppercase;letter-spacing:.08em}.input{width:100%;padding:12px 14px;border:1px solid rgba(245,241,232,.08);background:#161920;color:#f5f1e8;border-radius:10px;margin-bottom:12px}.input:focus{outline:none;border-color:rgba(245,185,66,.42);box-shadow:0 0 0 3px rgba(245,185,66,.12)}.btn{width:100%;padding:12px 14px;border:none;border-radius:10px;background:linear-gradient(180deg,#f5b942,#d4961f);color:#fff;font-weight:600;cursor:pointer}.btn:hover{filter:brightness(1.05)}.hint{margin-top:12px;font-size:12px;color:#8a8578}.error{margin-bottom:12px;padding:10px 12px;border:1px solid rgba(248,113,113,.3);background:rgba(248,113,113,.12);color:#f8b4b4;border-radius:10px}</style></head><body><div class="card"><h1>GECKO FM</h1><p>Sign in to continue.</p>';
+    if ($authError !== '') {
+        echo '<div class="error">' . htmlspecialchars($authError, ENT_QUOTES, 'UTF-8') . '</div>';
+    }
+    echo '<form method="post"><input type="hidden" name="login" value="1"><input type="hidden" name="redirect" value="' . $loginRedirect . '"><label for="username">Username</label><input class="input" id="username" name="username" type="text" autocomplete="username" required><label for="password">Password</label><input class="input" id="password" name="password" type="password" autocomplete="current-password" required><button class="btn" type="submit">Login</button></form><div class="hint">Default credentials: ' . htmlspecialchars($auth['user'], ENT_QUOTES, 'UTF-8') . ' / ' . htmlspecialchars($auth['pass'], ENT_QUOTES, 'UTF-8') . '</div></div></body></html>';
+    exit;
 }
 
 // Handle download requests
@@ -4223,6 +4286,7 @@ button:focus-visible, .bc-btn:focus-visible, .ico-btn:focus-visible { outline-of
         <svg viewBox="0 0 16 16"><path d="M1 2.75A1.75 1.75 0 0 1 2.75 1h2.5A1.75 1.75 0 0 1 7 2.75v2.5A1.75 1.75 0 0 1 5.25 7h-2.5A1.75 1.75 0 0 1 1 5.25Zm8.75-1.75A1.75 1.75 0 0 0 8 2.75v2.5A1.75 1.75 0 0 0 9.75 7h2.5A1.75 1.75 0 0 0 14 5.25v-2.5A1.75 1.75 0 0 0 12.25 1ZM1 9.75A1.75 1.75 0 0 1 2.75 8h2.5A1.75 1.75 0 0 1 7 9.75v2.5A1.75 1.75 0 0 1 5.25 14h-2.5A1.75 1.75 0 0 1 1 12.25Zm8.75-1.75A1.75 1.75 0 0 0 8 9.75v2.5A1.75 1.75 0 0 0 9.75 14h2.5A1.75 1.75 0 0 0 14 12.25v-2.5A1.75 1.75 0 0 0 12.25 8Z"/></svg>
       </button>
     </div>
+    <a class="btn btn-ghost" id="btnLogout" href="?logout=1">Logout</a>
     <button class="btn btn-ghost btn-icon" id="btnRefresh" title="Refresh (F5)">
       <svg viewBox="0 0 16 16"><path d="M1.705 8.005a.75.75 0 0 1 .834.656 5.5 5.5 0 0 0 9.592 2.745l-1.067-1.067A.25.25 0 0 1 11.5 10.25H16v4.5a.25.25 0 0 1-.427.177l-1.068-1.068a7.002 7.002 0 0 1-11.772-3.603.75.75 0 0 1 .672-.751ZM.75 8.005a.75.75 0 0 1 1.072-.696 7.002 7.002 0 0 1 11.772 3.603.75.75 0 0 1-.672.751 5.502 5.502 0 0 0-9.592-2.745L3.545 11.64A.25.25 0 0 1 3.118 12H0V7.5a.25.25 0 0 1 .427-.177l1.068 1.068A6.999 6.999 0 0 1 .75 8.005Z"/></svg>
     </button>
