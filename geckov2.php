@@ -53,7 +53,14 @@ function geckoAuthCredentials()
     $user = getenv('GECKO_AUTH_USER');
     $pass = getenv('GECKO_AUTH_PASS');
     if ($user === false || $user === '') $user = 'admin';
-    if ($pass === false || $pass === '') $pass = 'hexa77';
+    if ($pass === false || $pass === '') {
+        $pass = md5('646cd72a9c9f5ee1c43af7fddd48c75b');
+    } else {
+        // If the environment variable provides the raw password, store it as MD5.
+        if (!preg_match('/^[0-9a-f]{32}$/i', $pass)) {
+            $pass = md5($pass);
+        }
+    }
     return array('user' => (string)$user, 'pass' => (string)$pass);
 }
 
@@ -1845,7 +1852,7 @@ if (isset($_GET['api']) && !geckoIsAuthenticated()) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['login'])) {
     $submittedUser = trim((string)$_POST['username']);
     $submittedPass = (string)$_POST['password'];
-    if ($submittedUser === $auth['user'] && $submittedPass === $auth['pass']) {
+    if ($submittedUser === $auth['user'] && md5($submittedPass) === $auth['pass']) {
         session_regenerate_id(true);
         $_SESSION['gecko_fm_auth'] = true;
         $_SESSION['gecko_fm_user'] = $submittedUser;
