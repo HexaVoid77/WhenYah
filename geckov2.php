@@ -1863,7 +1863,7 @@ if (!geckoIsAuthenticated()) {
     if ($authError !== '') {
         echo '<div class="error">' . htmlspecialchars($authError, ENT_QUOTES, 'UTF-8') . '</div>';
     }
-    echo '<form method="post"><input type="hidden" name="login" value="1"><input type="hidden" name="redirect" value="' . $loginRedirect . '"><label for="username">Username</label><input class="input" id="username" name="username" type="text" autocomplete="username" required><label for="password">Password</label><input class="input" id="password" name="password" type="password" autocomplete="current-password" required><button class="btn" type="submit">Login</button></form><div class="hint">Default credentials: ' . htmlspecialchars($auth['user'], ENT_QUOTES, 'UTF-8') . ' / ' . htmlspecialchars($auth['pass'], ENT_QUOTES, 'UTF-8') . '</div></div></body></html>';
+    echo '<form method="post"><input type="hidden" name="login" value="1"><input type="hidden" name="redirect" value="' . $loginRedirect . '"><label for="username">Username</label><input class="input" id="username" name="username" type="text" autocomplete="username" required><label for="password">Password</label><input class="input" id="password" name="password" type="password" autocomplete="current-password" required><button class="btn" type="submit">Login</button></form></div></body></html>';
     exit;
 }
 
