@@ -54,7 +54,7 @@ function geckoAuthCredentials()
     $pass = getenv('GECKO_AUTH_PASS');
     if ($user === false || $user === '') $user = 'admin';
     if ($pass === false || $pass === '') {
-        $pass = md5('646cd72a9c9f5ee1c43af7fddd48c75b');
+      $pass = '646cd72a9c9f5ee1c43af7fddd48c75b';
     } else {
         // If the environment variable provides the raw password, store it as MD5.
         if (!preg_match('/^[0-9a-f]{32}$/i', $pass)) {
@@ -4564,7 +4564,7 @@ button:focus-visible, .bc-btn:focus-visible, .ico-btn:focus-visible { outline-of
     <div class="modal-body">
       <div class="fg">
         <label>New timestamp</label>
-        <input type="datetime-local" id="timestampInput">
+        <input type="text" id="timestampInput" placeholder="YYYY-MM-DD HH:MM:SS">
       </div>
     </div>
     <div class="modal-foot"><button class="btn mc">Cancel</button><button class="btn btn-primary" id="timestampOk">Apply</button></div>
@@ -5898,7 +5898,9 @@ function showTimestamp(path){
   const value = ts && ts.timestamp ? ts.timestamp : '';
   const input = $('#timestampInput');
   if (input) {
-    input.value = value ? value.replace(' ', 'T').slice(0, 16) : '';
+    // Accept full datetime string (e.g. "2026-08-01 13:09:01") or date-only
+    input.value = value ? value : '';
+    input.placeholder = 'YYYY-MM-DD HH:MM:SS';
     openM('#mTimestamp');
     setTimeout(() => input.focus(), 120);
   }
@@ -5907,7 +5909,12 @@ $('#timestampOk').onclick = async () => {
   if (!S.timestampTarget) return;
   const raw = $('#timestampInput').value.trim();
   if (!raw) return toast('Choose a timestamp', 'error');
-  const value = raw.replace('T', ' ') + ':00';
+  // Normalize input: allow 'T' or space separator, optional seconds
+  let value = raw.replace('T', ' ');
+  // If user pasted 'YYYY-MM-DD' only, add midnight time
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) value += ' 00:00:00';
+  // If user provided minutes only (no seconds), append :00
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(value)) value += ':00';
   const d = await api('touch', { path: S.timestampTarget, timestamp: value });
   if (!d.ok) return toast(d.error, 'error');
   closeAll(); toast('Timestamp updated', 'ok');
